@@ -13,6 +13,7 @@ from data_quality import (
     rows_with_missing,
     run_checks,
 )
+from quality_summary import quality_summary
 
 st.set_page_config(
     page_title="Excel & CSV Data Analyzer",
@@ -222,6 +223,8 @@ if range_col != "(none)":
     else:
         numeric_range = (range_col, low, high)
 
+issues = None  # stays None when no rules are chosen; the summary below handles that
+
 if not required_cols and not email_cols and numeric_range is None:
     st.info("Choose at least one rule above to validate your data.")
 else:
@@ -237,6 +240,35 @@ else:
         st.dataframe(by_rule, width="stretch", hide_index=True)
         st.write("**Every issue** (File Row = row number in your file)")
         st.dataframe(issues, width="stretch", hide_index=True)
+
+# ---------- Quality summary (Day 7) ----------
+st.subheader("📋 Quality Summary")
+quality = quality_summary(df, None if id_col == "(none)" else id_col, issues)
+
+q1, q2, q3, q4 = st.columns(4)
+q1.metric("Rows", quality["total_rows"])
+q2.metric("Columns", quality["total_columns"])
+q3.metric("Rows with issues", quality["rows_with_issues"])
+q4.metric("Quality score", f"{quality['score']:.1f}%")
+st.progress(quality["score"] / 100)
+
+st.write("**Issues by type**")
+st.dataframe(quality["table"], width="stretch", hide_index=True)
+
+if quality["rows_with_issues"]:
+    st.caption("Rows with issues (File Row numbers): "
+               + ", ".join(str(r) for r in quality["flagged_rows"]))
+
+with st.expander("How is the quality score calculated?"):
+    st.write(
+        "**Score = rows with no issue ÷ total rows × 100.** "
+        "A row counts once, however many problems it has. A row is flagged if it "
+        "has a blank cell, is an extra copy of an identical row, shares its "
+        "customer ID with a row that has different details, or fails one of the "
+        "validation rules chosen above."
+    )
+    if issues is None:
+        st.caption("No validation rules are selected, so field validation is not part of this score.")
 
 # ---------- Cleaning ----------
 st.subheader("🧹 Clean Your Data")
