@@ -1,4 +1,6 @@
 """Data-quality checks. Pure pandas functions: no Streamlit, so they are easy to test."""
+import re
+
 import pandas as pd
 
 
@@ -98,3 +100,107 @@ def duplicate_ids(df: pd.DataFrame, id_col) -> pd.DataFrame:
     }))
     result.insert(0, "File Row", result.index + 2)
     return result
+
+
+# ---------- Day 6: field validation ----------
+# Every check returns issues in the SAME long format (one row per problem),
+# so later days can count, chart, filter and export them all the same way.
+
+ISSUE_COLUMNS = ["File Row", "Rule", "Column", "Value", "Problem"]
+
+# something@domain.tld : no spaces, exactly one @, a dot in the domain,
+# and no empty parts such as "a@b..com" or "@example.com"
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+
+
+def _empty_issues() -> pd.DataFrame:
+    return pd.DataFrame(columns=ISSUE_COLUMNS)
+
+
+def _issue_rows(df, mask, rule, column, problem) -> pd.DataFrame:
+    """Turn a True/False row mask into issue rows."""
+    rows = df[mask]
+    shown = rows[column].astype("string").fillna("")
+    shown = shown.where(shown.str.strip() != "", "(blank)")
+    return pd.DataFrame({
+        "File Row": (rows.index + 2).to_numpy(),
+        "Rule": rule,
+        "Column": column,
+        "Value": shown.to_numpy(),
+        "Problem": problem,
+    })
+
+
+def _combine(parts) -> pd.DataFrame:
+    parts = [p for p in parts if not p.empty]
+    if not parts:
+        return _empty_issues()
+    combined = pd.concat(parts, ignore_index=True)
+    return combined.sort_values(["File Row", "Rule"], kind="stable").reset_index(drop=True)
+
+
+def check_required(df: pd.DataFrame, columns) -> pd.DataFrame:
+    """Required columns must not be blank. Also covers empty customer IDs."""
+    mask = missing_mask(df)
+    parts = [
+        _issue_rows(df, mask[c], "Required field", c, "Required value is blank")
+        for c in columns if c in df.columns
+    ]
+    return _combine(parts)
+
+
+def check_email(df: pd.DataFrame, column) -> pd.DataFrame:
+    """Non-blank values that are not valid email addresses.
+
+    Blank cells are skipped here: they are reported by the required-field
+    rule (or the missing-data section), not counted twice as 'invalid'.
+    """
+    if column not in df.columns:
+        return _empty_issues()
+    blank = missing_mask(df)[column]
+    valid = df[column].astype("string").str.match(EMAIL_PATTERN).fillna(False).astype(bool)
+    return _issue_rows(
+        df, ~blank & ~valid, "Email format", column,
+        "Not a valid email (check the @, the domain and spaces)",
+    )
+
+
+def check_range(df: pd.DataFrame, column, min_value, max_value) -> pd.DataFrame:
+    """Numbers must lie between min_value and max_value (inclusive)."""
+    if column not in df.columns:
+        return _empty_issues()
+    blank = missing_mask(df)[column]
+    numbers = pd.to_numeric(df[column], errors="coerce")
+    not_a_number = ~blank & numbers.isna()
+    outside = numbers.notna() & ((numbers < min_value) | (numbers > max_value))
+    return _combine([
+        _issue_rows(df, not_a_number, "Number range", column, "Not a number"),
+        _issue_rows(df, outside, "Number range", column,
+                    f"Outside allowed range {min_value:g} to {max_value:g}"),
+    ])
+
+
+def default_rules(df: pd.DataFrame) -> dict:
+    """Sensible starting rules, built only from columns that exist in this file."""
+    cols = list(df.columns)
+    id_col = guess_id_column(df)
+    return {
+        "required": [c for c in cols if c == id_col or str(c).strip().lower() in ("name", "email")],
+        "email": [c for c in cols if "mail" in str(c).lower()],
+        "range_column": next((c for c in cols if str(c).strip().lower() == "age"), None),
+        "range_min": 0.0,
+        "range_max": 120.0,
+    }
+
+
+def run_checks(df: pd.DataFrame, required=(), email=(), numeric_range=None) -> pd.DataFrame:
+    """Run the chosen rules. Columns that are not in the file are ignored.
+
+    numeric_range is None or a tuple: (column, min_value, max_value).
+    """
+    parts = [check_required(df, list(required))]
+    parts += [check_email(df, c) for c in email]
+    if numeric_range is not None:
+        column, low, high = numeric_range
+        parts.append(check_range(df, column, low, high))
+    return _combine(parts)

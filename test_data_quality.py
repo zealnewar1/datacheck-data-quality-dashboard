@@ -63,3 +63,55 @@ def test_no_duplicates_returns_empty():
 def test_guess_id_column():
     assert guess_id_column(pd.DataFrame({"name": [1], "customer_id": [2]})) == "customer_id"
     assert guess_id_column(pd.DataFrame({"name": [1]})) is None
+
+
+# ---------- Day 6 tests ----------
+from data_quality import (
+    check_email, check_range, check_required, default_rules, run_checks,
+)
+
+
+def people():
+    return pd.DataFrame({
+        "customer_id": ["C1", "", "C3", "C4"],
+        "email": ["a@example.com", "bad.example.com", None, "x@@example.com"],
+        "age": [30, -5, "abc", 150],
+    })
+
+
+def test_required_flags_blank_and_whitespace_ids():
+    result = check_required(people(), ["customer_id"])
+    assert result["File Row"].tolist() == [3]
+    assert result["Value"].tolist() == ["(blank)"]
+
+
+def test_email_flags_invalid_but_skips_blank():
+    result = check_email(people(), "email")
+    assert result["File Row"].tolist() == [3, 5]     # blank email on row 4 is skipped
+    assert check_email(pd.DataFrame({"e": ["a@b.com", "first.last@mail.co.in"]}), "e").empty
+
+
+def test_email_rejects_common_mistakes():
+    bad = ["no-at.com", "a@b", "a@@b.com", "@b.com", "a b@c.com", "a@b..com", "a@b.com "]
+    df = pd.DataFrame({"e": bad})
+    assert len(check_email(df, "e")) == len(bad)
+
+
+def test_range_flags_out_of_range_and_non_numbers():
+    result = check_range(people(), "age", 0, 120)
+    assert result["File Row"].tolist() == [3, 4, 5]
+    assert result["Problem"].tolist()[1] == "Not a number"
+
+
+def test_run_checks_ignores_missing_columns_and_handles_empty_input():
+    df = people()
+    assert run_checks(df, required=["nope"], email=["nope"], numeric_range=("nope", 0, 1)).empty
+    assert run_checks(pd.DataFrame({"a": []}), required=["a"]).empty
+
+
+def test_default_rules_use_existing_columns_only():
+    rules = default_rules(people())
+    assert rules["required"] == ["customer_id", "email"]
+    assert rules["email"] == ["email"]
+    assert rules["range_column"] == "age"
+    assert default_rules(pd.DataFrame({"x": [1]}))["range_column"] is None

@@ -4,12 +4,14 @@ import plotly.express as px
 from io import BytesIO
 
 from data_quality import (
+    default_rules,
     duplicate_ids,
     exact_duplicates,
     guess_id_column,
     missing_mask,
     missing_summary,
     rows_with_missing,
+    run_checks,
 )
 
 st.set_page_config(
@@ -187,6 +189,54 @@ else:
         )
         st.caption("Blank IDs are reported under Missing Data, not here.")
         st.dataframe(dup_ids, width="stretch", hide_index=True)
+
+# ---------- Field validation (Day 6) ----------
+st.subheader("✅ Field Validation")
+st.caption("Rules only use columns that exist in your file. Adjust them if needed.")
+
+rules = default_rules(df)
+all_cols = df.columns.tolist()
+numeric_options = ["(none)"] + df.select_dtypes(include="number").columns.tolist()
+
+required_cols = st.multiselect(
+    "Required columns (must not be blank)", all_cols, default=rules["required"]
+)
+email_cols = st.multiselect(
+    "Columns that should contain email addresses", all_cols, default=rules["email"]
+)
+
+range_col = st.selectbox(
+    "Check that numbers in this column stay within a range",
+    numeric_options,
+    index=numeric_options.index(rules["range_column"])
+    if rules["range_column"] in numeric_options else 0,
+)
+
+numeric_range = None
+if range_col != "(none)":
+    r1, r2 = st.columns(2)
+    low = r1.number_input("Minimum allowed", value=rules["range_min"])
+    high = r2.number_input("Maximum allowed", value=rules["range_max"])
+    if low > high:
+        st.warning("Minimum is larger than maximum, so the range check was skipped.")
+    else:
+        numeric_range = (range_col, low, high)
+
+if not required_cols and not email_cols and numeric_range is None:
+    st.info("Choose at least one rule above to validate your data.")
+else:
+    issues = run_checks(df, required_cols, email_cols, numeric_range)
+    if issues.empty:
+        st.success("All selected checks passed.")
+    else:
+        v1, v2 = st.columns(2)
+        v1.metric("Validation issues", len(issues))
+        v2.metric("Rows affected", int(issues["File Row"].nunique()))
+        st.write("**Issues by rule**")
+        by_rule = issues.groupby(["Rule", "Column"]).size().reset_index(name="Issues")
+        st.dataframe(by_rule, width="stretch", hide_index=True)
+        st.write("**Every issue** (File Row = row number in your file)")
+        st.dataframe(issues, width="stretch", hide_index=True)
 
 # ---------- Cleaning ----------
 st.subheader("🧹 Clean Your Data")
