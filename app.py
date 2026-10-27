@@ -3,6 +3,15 @@ import pandas as pd
 import plotly.express as px
 from io import BytesIO
 
+from data_quality import (
+    duplicate_ids,
+    exact_duplicates,
+    guess_id_column,
+    missing_mask,
+    missing_summary,
+    rows_with_missing,
+)
+
 st.set_page_config(
     page_title="Excel & CSV Data Analyzer",
     page_icon="📊",
@@ -106,7 +115,7 @@ st.subheader("📈 Dataset Overview")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Rows", len(df))
 c2.metric("Columns", len(df.columns))
-c3.metric("Missing cells", int(df.isna().sum().sum()))
+c3.metric("Missing cells", int(missing_mask(df).sum().sum()))
 c4.metric("Duplicate rows", int(df.duplicated().sum()))
 
 st.subheader("Your Data")
@@ -116,10 +125,68 @@ with st.expander("View column information"):
     info = pd.DataFrame({
         "Column": df.columns,
         "Data Type": df.dtypes.astype(str).values,
-        "Missing Values": df.isna().sum().values,
+        "Missing Values": missing_mask(df).sum().values,
         "Unique Values": df.nunique().values,
     })
     st.dataframe(info, width="stretch")
+
+# ---------- Missing data (Day 4) ----------
+st.subheader("🕳️ Missing Data")
+summary = missing_summary(df)
+affected = rows_with_missing(df)
+
+if affected.empty:
+    st.success("No missing values found.")
+else:
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Rows with missing data", len(affected))
+    m2.metric("% of all rows", f"{len(affected) / len(df) * 100:.1f}%")
+    m3.metric("Columns affected", int((summary["Missing Count"] > 0).sum()))
+
+    st.write("**Missing values per column**")
+    st.dataframe(summary, width="stretch", hide_index=True)
+
+    st.write("**Rows that need attention** (File Row = row number in your file)")
+    st.dataframe(affected, width="stretch", hide_index=True)
+
+# ---------- Duplicates (Day 5) ----------
+st.subheader("👯 Duplicate Records")
+
+st.write("**Exact duplicate rows** (every column is identical)")
+exact_dups = exact_duplicates(df)
+if exact_dups.empty:
+    st.success("No exact duplicate rows found.")
+else:
+    extra = int((exact_dups["Status"] == "Extra copy").sum())
+    d1, d2 = st.columns(2)
+    d1.metric("Extra copies to remove", extra)
+    d2.metric("Groups of duplicates", int(exact_dups["Duplicate Group"].nunique()))
+    st.dataframe(exact_dups, width="stretch", hide_index=True)
+
+st.write("**Duplicate customer IDs** (checked separately)")
+id_options = ["(none)"] + df.columns.tolist()
+guessed = guess_id_column(df)
+id_col = st.selectbox(
+    "Which column is the customer ID?",
+    id_options,
+    index=id_options.index(guessed) if guessed in id_options else 0,
+)
+
+if id_col == "(none)":
+    st.info("Pick the ID column to check for repeated IDs.")
+else:
+    dup_ids = duplicate_ids(df, id_col)
+    if dup_ids.empty:
+        st.success(f"Every value in '{id_col}' is unique.")
+    else:
+        i1, i2 = st.columns(2)
+        i1.metric("IDs that repeat", int(dup_ids[id_col].nunique()))
+        i2.metric(
+            "Conflicting repeats (different details)",
+            int(dup_ids.loc[dup_ids["Issue"] == "Same ID, different details", id_col].nunique()),
+        )
+        st.caption("Blank IDs are reported under Missing Data, not here.")
+        st.dataframe(dup_ids, width="stretch", hide_index=True)
 
 # ---------- Cleaning ----------
 st.subheader("🧹 Clean Your Data")
@@ -130,7 +197,7 @@ clean_df = df.copy()
 if remove_duplicates:
     clean_df = clean_df.drop_duplicates()
 if remove_missing:
-    clean_df = clean_df.dropna()
+    clean_df = clean_df[~missing_mask(clean_df).any(axis=1)]
 
 st.write(f"Original rows: {len(df)} | Rows after cleaning: {len(clean_df)}")
 

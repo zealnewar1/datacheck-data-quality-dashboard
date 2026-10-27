@@ -1,4 +1,3 @@
-
 customer_id,name,email,age,city
 C001,Aarav Sharma,aarav@example.com,25,Guwahati
 C002,Priya Das,priya@example.com,29,Shillong
@@ -16,6 +15,7 @@ C013,Dev Sharma,dev@example.com,41,Silchar
 C014,Meena Das,meena@example.com,33,Gangtok
 C015,Rohan Rai,rohan@example.com,28,Imphal
 C015,Rohan Rai,rohan@example.com,28,Imphal
+C016,,pooja@example.com,29,Guwahati
 C017,Tina Roy,tina@example.com,-5,Guwahati
 C018,Anil Das,anil@example.com,26,Shillong
 C019,Pema Lepcha,pema@example.com,34,Silchar
@@ -30,3 +30,12 @@ C027,Simran Rai,simran@example.com,24,Guwahati
 C028,Nabin Roy,nabin@example.com,27,Shillong
 C029,Deepa Das,deepa@example.com,30,Silchar
 C030,Samir Rai,samir@example.com,32,Gangtok
+C031,Bikram Thapa,bikram@example,33,Gangtok
+C032,Lakshmi Devi,lakshmi@@example.com,38,Silchar
+C033,Tashi Bhutia,tashi@example.com,,
+,Ritu Sen,ritu@example.com,27,Shillong
+C020,Nisha Rai,nisha.new@example.com,23,Gangtok
+C036,Farhan Ali,farhan@example.com,150,Guwahati
+C037,Ivy Kharkongor,ivy k@example.com,26,Shillong
+C025,Monika Roy,monika@example.com,28,Gangtok
+C040,Zoya Khan,@example.com,26,Silchar
