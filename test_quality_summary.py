@@ -1,13 +1,15 @@
 import pandas as pd
 
 from data_quality import run_checks
-from quality_summary import quality_summary
+from quality_summary import flagged_records, quality_summary
 
 
 def count_for(summary, issue_type):
     table = summary["table"]
     return int(table.loc[table["Issue type"] == issue_type, "Issues"].iloc[0])
 
+
+# ---------- Day 7: quality summary ----------
 
 def test_clean_data_scores_100():
     df = pd.DataFrame({"id": [1, 2, 3], "email": ["a@b.com", "c@d.com", "e@f.com"]})
@@ -83,3 +85,38 @@ def test_empty_dataframe_does_not_crash():
     result = quality_summary(df, id_col="id")
     assert result["score"] == 100.0
     assert result["total_rows"] == 0
+
+
+# ---------- Day 8: flagged records ----------
+
+def test_flagged_records_lists_reasons_per_row():
+    df = pd.DataFrame({"id": [1, 2, 3], "email": ["a@b.com", "", "bad"]})
+    issues = run_checks(df, email=["email"])
+    result = flagged_records(df, id_col="id", issues=issues)
+    assert result["File Row"].tolist() == [3, 4]
+    assert "Missing data" in result.loc[0, "Problems"]
+    assert "Email format" in result.loc[1, "Problems"]
+
+
+def test_flagged_records_filters_by_issue_type():
+    df = pd.DataFrame({"id": [1, 2, 3], "email": ["a@b.com", "", "bad"]})
+    issues = run_checks(df, email=["email"])
+    result = flagged_records(df, issues=issues, issue_types=["Email format"])
+    assert result["File Row"].tolist() == [4]
+
+
+def test_flagged_records_can_return_all_rows():
+    df = pd.DataFrame({"id": [1, 2], "name": ["a", ""]})
+    result = flagged_records(df, only_flagged=False)
+    assert len(result) == 2
+    assert result["Problems"].tolist() == ["", "Missing data"]
+
+
+def test_flagged_records_clean_data_is_empty():
+    df = pd.DataFrame({"id": [1, 2], "name": ["a", "b"]})
+    assert flagged_records(df).empty
+
+
+def test_flagged_records_empty_dataframe_does_not_crash():
+    df = pd.DataFrame({"id": []})
+    assert flagged_records(df).empty

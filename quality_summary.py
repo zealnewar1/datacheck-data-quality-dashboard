@@ -1,4 +1,4 @@
-"""Day 7: quality summary and score. Pure pandas, no Streamlit.
+"""Quality summary, score and flagged records. Pure pandas, no Streamlit.
 
 Quality score = (rows with no issue / total rows) x 100
 
@@ -9,6 +9,9 @@ many problems it has:
   - it shares a customer ID with a row that has different details
     (both rows are flagged, because we cannot tell which one is right)
   - it has a field-validation issue (required, email format, number range)
+
+Day 8 adds flagged_records(), which shows the data with a "Problems" column
+explaining why each row was flagged.
 """
 import pandas as pd
 
@@ -21,15 +24,9 @@ def _as_row_set(values) -> set:
     return {int(v) for v in values}
 
 
-def quality_summary(df: pd.DataFrame, id_col=None, issues=None) -> dict:
-    """Count every issue type and calculate the quality score.
-
-    id_col: the customer-ID column, or None to skip the duplicate-ID check.
-    issues: the table returned by run_checks (or None if no rules were chosen).
-    All row numbers are 'File Row' numbers (header = row 1).
-    """
-    total_rows = len(df)
-    entries = []  # (issue type, number of issues, set of file rows)
+def _collect_entries(df: pd.DataFrame, id_col=None, issues=None) -> list:
+    """Return (issue type, number of issues, set of file rows) for every check."""
+    entries = []
 
     # Missing data: issues = blank cells, rows = rows containing any blank
     mask = missing_mask(df)
@@ -55,6 +52,19 @@ def quality_summary(df: pd.DataFrame, id_col=None, issues=None) -> dict:
         for rule, group in issues.groupby("Rule", sort=True):
             entries.append((rule, len(group), _as_row_set(group["File Row"])))
 
+    return entries
+
+
+def quality_summary(df: pd.DataFrame, id_col=None, issues=None) -> dict:
+    """Count every issue type and calculate the quality score.
+
+    id_col: the customer-ID column, or None to skip the duplicate-ID check.
+    issues: the table returned by run_checks (or None if no rules were chosen).
+    All row numbers are 'File Row' numbers (header = row 1).
+    """
+    total_rows = len(df)
+    entries = _collect_entries(df, id_col, issues)
+
     flagged = set()
     for _, _, rows in entries:
         flagged |= rows
@@ -77,3 +87,32 @@ def quality_summary(df: pd.DataFrame, id_col=None, issues=None) -> dict:
         "table": table,
         "flagged_rows": sorted(flagged),
     }
+
+
+def flagged_records(df: pd.DataFrame, id_col=None, issues=None,
+                    issue_types=None, only_flagged=True) -> pd.DataFrame:
+    """Return the data with 'File Row' and 'Problems' columns added.
+
+    only_flagged=True keeps rows that have at least one problem. If
+    issue_types is given, a row is kept only when it has one of those types.
+    only_flagged=False returns every row (Problems is blank for clean rows).
+    """
+    reasons = {}  # file row -> list of issue types, in table order
+    for name, _, rows in _collect_entries(df, id_col, issues):
+        for row in rows:
+            reasons.setdefault(row, []).append(name)
+
+    file_rows = [int(r) for r in df.index + 2]
+    out = df.copy()
+    out.insert(0, "Problems", ["; ".join(reasons.get(r, [])) for r in file_rows])
+    out.insert(0, "File Row", file_rows)
+
+    if only_flagged:
+        wanted = None if issue_types is None else set(issue_types)
+        if wanted is None:
+            keep = [r in reasons for r in file_rows]
+        else:
+            keep = [any(t in wanted for t in reasons.get(r, [])) for r in file_rows]
+        out = out[pd.Series(keep, index=out.index, dtype=bool)]
+
+    return out.reset_index(drop=True)

@@ -13,7 +13,7 @@ from data_quality import (
     rows_with_missing,
     run_checks,
 )
-from quality_summary import quality_summary
+from quality_summary import flagged_records, quality_summary
 
 st.set_page_config(
     page_title="Excel & CSV Data Analyzer",
@@ -191,30 +191,41 @@ else:
         st.caption("Blank IDs are reported under Missing Data, not here.")
         st.dataframe(dup_ids, width="stretch", hide_index=True)
 
-# ---------- Field validation (Day 6) ----------
+# ---------- Field validation (Day 6, rule toggles Day 8) ----------
 st.subheader("✅ Field Validation")
-st.caption("Rules only use columns that exist in your file. Adjust them if needed.")
+st.caption("Switch rules on or off, and choose the columns each rule applies to.")
 
 rules = default_rules(df)
 all_cols = df.columns.tolist()
 numeric_options = ["(none)"] + df.select_dtypes(include="number").columns.tolist()
 
+run_required = st.checkbox("Run the required-fields check", value=True)
 required_cols = st.multiselect(
-    "Required columns (must not be blank)", all_cols, default=rules["required"]
-)
-email_cols = st.multiselect(
-    "Columns that should contain email addresses", all_cols, default=rules["email"]
+    "Required columns (must not be blank)",
+    all_cols,
+    default=rules["required"],
+    disabled=not run_required,
 )
 
+run_email = st.checkbox("Run the email-format check", value=True)
+email_cols = st.multiselect(
+    "Columns that should contain email addresses",
+    all_cols,
+    default=rules["email"],
+    disabled=not run_email,
+)
+
+run_range = st.checkbox("Run the number-range check", value=True)
 range_col = st.selectbox(
     "Check that numbers in this column stay within a range",
     numeric_options,
     index=numeric_options.index(rules["range_column"])
     if rules["range_column"] in numeric_options else 0,
+    disabled=not run_range,
 )
 
 numeric_range = None
-if range_col != "(none)":
+if run_range and range_col != "(none)":
     r1, r2 = st.columns(2)
     low = r1.number_input("Minimum allowed", value=rules["range_min"])
     high = r2.number_input("Maximum allowed", value=rules["range_max"])
@@ -223,12 +234,16 @@ if range_col != "(none)":
     else:
         numeric_range = (range_col, low, high)
 
-issues = None  # stays None when no rules are chosen; the summary below handles that
+# A switched-off rule behaves exactly like a rule with no columns
+active_required = required_cols if run_required else []
+active_email = email_cols if run_email else []
 
-if not required_cols and not email_cols and numeric_range is None:
-    st.info("Choose at least one rule above to validate your data.")
+issues = None  # stays None when no rules are active; the summary below handles that
+
+if not active_required and not active_email and numeric_range is None:
+    st.info("Switch on at least one rule above to validate your data.")
 else:
-    issues = run_checks(df, required_cols, email_cols, numeric_range)
+    issues = run_checks(df, active_required, active_email, numeric_range)
     if issues.empty:
         st.success("All selected checks passed.")
     else:
@@ -243,7 +258,8 @@ else:
 
 # ---------- Quality summary (Day 7) ----------
 st.subheader("📋 Quality Summary")
-quality = quality_summary(df, None if id_col == "(none)" else id_col, issues)
+id_arg = None if id_col == "(none)" else id_col
+quality = quality_summary(df, id_arg, issues)
 
 q1, q2, q3, q4 = st.columns(4)
 q1.metric("Rows", quality["total_rows"])
@@ -269,6 +285,56 @@ with st.expander("How is the quality score calculated?"):
     )
     if issues is None:
         st.caption("No validation rules are selected, so field validation is not part of this score.")
+
+# ---------- Issues by category (Day 8) ----------
+st.subheader("📉 Issues by Category")
+issue_table = quality["table"]
+chart_data = issue_table[issue_table["Issues"] > 0]
+
+if chart_data.empty:
+    st.success("No issues to chart.")
+else:
+    count_by = st.radio(
+        "Count by",
+        ["Issues", "Rows affected"],
+        horizontal=True,
+        help="'Issues' counts every problem. 'Rows affected' counts each row once per type.",
+    )
+    issues_fig = px.bar(
+        chart_data.sort_values(count_by),
+        x=count_by,
+        y="Issue type",
+        orientation="h",
+        text=count_by,
+    )
+    issues_fig.update_layout(yaxis_title=None)
+    st.plotly_chart(issues_fig, width="stretch")
+
+# ---------- Records with issues (Day 8) ----------
+st.subheader("🔎 Records With Issues")
+
+if chart_data.empty:
+    st.success("Every row is clean.")
+else:
+    only_flagged = st.checkbox("Show only records with issues", value=True)
+    available_types = chart_data["Issue type"].tolist()
+    chosen_types = st.multiselect(
+        "Issue types to show",
+        available_types,
+        default=available_types,
+        disabled=not only_flagged,
+    )
+
+    records = flagged_records(
+        df, id_arg, issues,
+        issue_types=chosen_types, only_flagged=only_flagged,
+    )
+    if records.empty:
+        st.info("No records match. Pick at least one issue type.")
+    else:
+        st.write(f"Showing {len(records)} of {len(df)} rows "
+                 "(File Row = row number in your file)")
+        st.dataframe(records, width="stretch", hide_index=True)
 
 # ---------- Cleaning ----------
 st.subheader("🧹 Clean Your Data")
