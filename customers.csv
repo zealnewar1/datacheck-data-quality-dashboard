@@ -1,0 +1,32 @@
+
+customer_id,name,email,age,city
+C001,Aarav Sharma,aarav@example.com,25,Guwahati
+C002,Priya Das,priya@example.com,29,Shillong
+C003,Rahul Roy,rahul@example.com,32,Silchar
+C004,Neha Tamang,neha.example.com,24,Gangtok
+C005,Arjun Lepcha,arjun@example.com,28,Imphal
+C006,Meera Rai,,31,Guwahati
+C007,Suman Das,suman@example.com,,Shillong
+C008,Riya Sharma,riya@example.com,26,Silchar
+C009,Amit Roy,amit@example.com,35,Gangtok
+C010,Anita Das,anita@example.com,27,Imphal
+C011,Karan Rai,karan@example.com,30,Guwahati
+C012,Sunita Roy,sunita@example.com,22,Shillong
+C013,Dev Sharma,dev@example.com,41,Silchar
+C014,Meena Das,meena@example.com,33,Gangtok
+C015,Rohan Rai,rohan@example.com,28,Imphal
+C015,Rohan Rai,rohan@example.com,28,Imphal
+C017,Tina Roy,tina@example.com,-5,Guwahati
+C018,Anil Das,anil@example.com,26,Shillong
+C019,Pema Lepcha,pema@example.com,34,Silchar
+C020,Nisha Rai,nisha@example.com,23,Gangtok
+C021,Manish Roy,manish@example.com,37,Imphal
+C022,Kabir Das,kabir@example.com,29,Guwahati
+C023,Reena Sharma,reena@example.com,31,Shillong
+C024,Jay Rai,jay@example.com,25,Silchar
+C025,Monika Roy,monika@example.com,28,Gangtok
+C026,Alok Das,alok@example.com,36,Imphal
+C027,Simran Rai,simran@example.com,24,Guwahati
+C028,Nabin Roy,nabin@example.com,27,Shillong
+C029,Deepa Das,deepa@example.com,30,Silchar
+C030,Samir Rai,samir@example.com,32,Gangtok
