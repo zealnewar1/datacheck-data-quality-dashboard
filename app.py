@@ -20,6 +20,13 @@ from data_quality import (
     rows_with_missing,
     run_checks,
 )
+from file_loading import (
+    FileLoadError,
+    file_kind,
+    get_sheet_names,
+    load_csv,
+    load_excel,
+)
 from quality_summary import flagged_records, quality_summary
 from reports import build_issue_report, report_to_excel_bytes
 
@@ -37,22 +44,18 @@ PREVIEW_ROWS = 100
 # parsed once instead of on every widget interaction.
 
 @st.cache_data(show_spinner=False)
-def read_csv_bytes(data: bytes) -> pd.DataFrame:
-    try:
-        return pd.read_csv(BytesIO(data), encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        # Fallback for CSVs saved in older Windows/Excel encodings
-        return pd.read_csv(BytesIO(data), encoding="latin-1")
+def cached_load_csv(data: bytes) -> pd.DataFrame:
+    return load_csv(data)
 
 
 @st.cache_data(show_spinner=False)
-def get_sheet_names(data: bytes) -> list[str]:
-    return pd.ExcelFile(BytesIO(data)).sheet_names
+def cached_sheet_names(data: bytes) -> list[str]:
+    return get_sheet_names(data)
 
 
 @st.cache_data(show_spinner=False)
-def read_excel_bytes(data: bytes, sheet: str) -> pd.DataFrame:
-    return pd.read_excel(BytesIO(data), sheet_name=sheet)
+def cached_load_excel(data: bytes, sheet: str) -> pd.DataFrame:
+    return load_excel(data, sheet)
 
 
 @st.cache_data(show_spinner=False)
@@ -101,25 +104,18 @@ if uploaded_file is None:
     st.dataframe(sample_df, width="stretch")
     st.stop()
 
-# ---------- Load data (only file-reading errors are caught here) ----------
+# ---------- Load data (file_loading.py turns every problem into a clear message) ----------
 file_bytes = uploaded_file.getvalue()
 
 try:
-    if uploaded_file.name.lower().endswith(".csv"):
-        df = read_csv_bytes(file_bytes)
+    if file_kind(uploaded_file.name) == "csv":
+        df = cached_load_csv(file_bytes)
     else:
-        sheet = st.selectbox("Choose worksheet", get_sheet_names(file_bytes))
-        df = read_excel_bytes(file_bytes, sheet)
-except Exception as error:
-    st.error(f"Could not read this file: {error}")
+        sheet = st.selectbox("Choose worksheet", cached_sheet_names(file_bytes))
+        df = cached_load_excel(file_bytes, sheet)
+except FileLoadError as error:
+    st.error(str(error))
     st.stop()
-
-if df.empty or len(df.columns) == 0:
-    st.warning("This file contains no data.")
-    st.stop()
-
-# Make every column name a string so charts and selectboxes behave consistently
-df = df.rename(columns=str)
 
 # ---------- Overview ----------
 st.subheader("📈 Dataset Overview")
