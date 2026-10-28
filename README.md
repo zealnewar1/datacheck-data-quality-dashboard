@@ -2,7 +2,7 @@
 
 A Streamlit app that checks a CSV or Excel file for data-quality problems, gives it a quality score, and lets you download a cleaned copy and a separate issue report. Your original data is never changed.
 
-**Live demo:** <PASTE YOUR STREAMLIT URL HERE AFTER DAY 13>
+**Live demo:** <https://datacheck-data-quality-dashboard-6tmotl2dpuj7hrtr4nnok5.streamlit.app/>
 
 ![Quality summary](screenshots/quality-summary.png)
 
