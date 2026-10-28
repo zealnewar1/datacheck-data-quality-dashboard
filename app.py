@@ -3,6 +3,13 @@ import pandas as pd
 import plotly.express as px
 from io import BytesIO
 
+from cleaning import (
+    FILL_CUSTOM,
+    FILL_MEAN,
+    FILL_MEDIAN,
+    FILL_MODE,
+    clean_data,
+)
 from data_quality import (
     default_rules,
     duplicate_ids,
@@ -14,6 +21,7 @@ from data_quality import (
     run_checks,
 )
 from quality_summary import flagged_records, quality_summary
+from reports import build_issue_report, report_to_excel_bytes
 
 st.set_page_config(
     page_title="Excel & CSV Data Analyzer",
@@ -51,7 +59,7 @@ def read_excel_bytes(data: bytes, sheet: str) -> pd.DataFrame:
 def to_excel_bytes(df: pd.DataFrame) -> bytes:
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Analyzed Data")
+        df.to_excel(writer, index=False, sheet_name="Cleaned Data")
     return buffer.getvalue()
 
 
@@ -237,10 +245,11 @@ if run_range and range_col != "(none)":
 # A switched-off rule behaves exactly like a rule with no columns
 active_required = required_cols if run_required else []
 active_email = email_cols if run_email else []
+rules_active = bool(active_required or active_email or numeric_range is not None)
 
 issues = None  # stays None when no rules are active; the summary below handles that
 
-if not active_required and not active_email and numeric_range is None:
+if not rules_active:
     st.info("Switch on at least one rule above to validate your data.")
 else:
     issues = run_checks(df, active_required, active_email, numeric_range)
@@ -336,65 +345,123 @@ else:
                  "(File Row = row number in your file)")
         st.dataframe(records, width="stretch", hide_index=True)
 
-# ---------- Cleaning ----------
+# ---------- Clean your data (Day 9) ----------
 st.subheader("🧹 Clean Your Data")
-remove_duplicates = st.checkbox("Remove duplicate rows")
-remove_missing = st.checkbox("Remove rows containing missing values")
-
-clean_df = df.copy()
-if remove_duplicates:
-    clean_df = clean_df.drop_duplicates()
-if remove_missing:
-    clean_df = clean_df[~missing_mask(clean_df).any(axis=1)]
-
-st.write(f"Original rows: {len(df)} | Rows after cleaning: {len(clean_df)}")
-
-if clean_df.empty:
-    st.warning("No rows left after cleaning. Untick an option above.")
-    st.stop()
-
-st.dataframe(clean_df.head(PREVIEW_ROWS), width="stretch")
-
-# ---------- Charts ----------
-st.subheader("📊 Visualize Your Data")
-numeric_cols = clean_df.select_dtypes(include="number").columns.tolist()
-
-if numeric_cols:
-    chart_type = st.selectbox(
-        "Chart type",
-        ["Bar Chart", "Line Chart", "Scatter Plot", "Histogram"],
-    )
-    y_col = st.selectbox("Choose numeric column", numeric_cols)
-
-    # A histogram only needs one column, so hide the X-axis picker for it
-    x_col = None
-    if chart_type != "Histogram":
-        x_col = st.selectbox("Choose category or X-axis", clean_df.columns.tolist())
-
-    try:
-        fig = build_chart(clean_df, chart_type, x_col, y_col)
-        if fig is not None:
-            st.plotly_chart(fig, width="stretch")
-    except Exception as error:
-        st.error(f"Could not build this chart: {error}")
-else:
-    st.info("No numeric columns are available for charting.")
-
-# ---------- Downloads ----------
-st.subheader("⬇️ Download Your Data")
-
-st.download_button(
-    "Download CSV",
-    data=clean_df.to_csv(index=False).encode("utf-8-sig"),
-    file_name="analyzed_data.csv",
-    mime="text/csv",
+st.caption(
+    "Your original data is never changed. Cleaning works on a copy, in this order: "
+    "remove duplicates, fill blanks, then remove any rows that still have blanks."
 )
 
-st.download_button(
-    "Download Excel",
-    data=to_excel_bytes(clean_df),
-    file_name="analyzed_data.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+remove_duplicates = st.checkbox("Remove exact duplicate rows (keeps the first copy)")
+
+fill_blanks = st.checkbox("Fill selected missing values")
+fills = {}
+if fill_blanks:
+    blank_mask = missing_mask(df)
+    # The ID column is left out: an invented ID or email hides a real problem
+    fillable = [c for c in df.columns if blank_mask[c].any() and c != id_arg]
+    if not fillable:
+        st.info("There are no missing values to fill (the customer ID column is never filled).")
+    else:
+        fill_cols = st.multiselect("Columns to fill", fillable)
+        for col in fill_cols:
+            is_numeric = pd.api.types.is_numeric_dtype(df[col])
+            methods = [FILL_MODE, FILL_CUSTOM] + ([FILL_MEDIAN, FILL_MEAN] if is_numeric else [])
+            method = st.selectbox(f"How should '{col}' be filled?", methods, key=f"fill_method_{col}")
+            value = None
+            if method == FILL_CUSTOM:
+                value = st.text_input(f"Value to use for '{col}'", key=f"fill_value_{col}")
+            fills[col] = {"method": method, "value": value}
+
+remove_missing = st.checkbox("Remove rows that still contain missing values")
+
+clean_df, clean_stats = clean_data(df, remove_duplicates, fills, remove_missing)
+
+for col, reason in clean_stats["skipped"]:
+    st.warning(f"'{col}' was not filled: {reason}.")
+
+s1, s2, s3, s4, s5 = st.columns(5)
+s1.metric("Original rows", len(df))
+s2.metric("Rows after cleaning", len(clean_df))
+s3.metric("Duplicates removed", clean_stats["duplicates_removed"])
+s4.metric("Cells filled", clean_stats["cells_filled"])
+s5.metric("Rows removed (blanks)", clean_stats["rows_removed_for_missing"])
+
+has_rows = not clean_df.empty
+
+if not has_rows:
+    st.warning("No rows left after cleaning. Untick an option above.")
+else:
+    issues_after = (
+        run_checks(clean_df, active_required, active_email, numeric_range)
+        if rules_active else None
+    )
+    after = quality_summary(clean_df, id_arg, issues_after)
+    st.metric(
+        "Quality score after cleaning",
+        f"{after['score']:.1f}%",
+        delta=f"{after['score'] - quality['score']:+.1f} points vs. original",
+    )
+    st.dataframe(clean_df.head(PREVIEW_ROWS), width="stretch")
+
+# ---------- Charts ----------
+if has_rows:
+    st.subheader("📊 Visualize Your Data")
+    numeric_cols = clean_df.select_dtypes(include="number").columns.tolist()
+
+    if numeric_cols:
+        chart_type = st.selectbox(
+            "Chart type",
+            ["Bar Chart", "Line Chart", "Scatter Plot", "Histogram"],
+        )
+        y_col = st.selectbox("Choose numeric column", numeric_cols)
+
+        # A histogram only needs one column, so hide the X-axis picker for it
+        x_col = None
+        if chart_type != "Histogram":
+            x_col = st.selectbox("Choose category or X-axis", clean_df.columns.tolist())
+
+        try:
+            fig = build_chart(clean_df, chart_type, x_col, y_col)
+            if fig is not None:
+                st.plotly_chart(fig, width="stretch")
+        except Exception as error:
+            st.error(f"Could not build this chart: {error}")
+    else:
+        st.info("No numeric columns are available for charting.")
+
+# ---------- Downloads (Day 9) ----------
+st.subheader("⬇️ Download")
+st.caption(
+    "The issue report describes your original file, so its File Row numbers "
+    "match the rows you uploaded."
+)
+
+report_bytes = report_to_excel_bytes(build_issue_report(df, id_arg, issues))
+xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+dl1, dl2, dl3 = st.columns(3)
+if has_rows:
+    dl1.download_button(
+        "Cleaned data (CSV)",
+        data=clean_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="cleaned_data.csv",
+        mime="text/csv",
+    )
+    dl2.download_button(
+        "Cleaned data (Excel)",
+        data=to_excel_bytes(clean_df),
+        file_name="cleaned_data.xlsx",
+        mime=xlsx_mime,
+    )
+else:
+    dl1.info("Nothing to download: no rows left after cleaning.")
+
+dl3.download_button(
+    "Issue report (Excel)",
+    data=report_bytes,
+    file_name="issue_report.xlsx",
+    mime=xlsx_mime,
 )
 
 st.success("Analysis complete!")
