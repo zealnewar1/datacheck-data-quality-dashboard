@@ -53,7 +53,7 @@ python -m streamlit run app.py
 ```bash
 python -m pytest -v
 ```
-
+“The project has 115 automated tests.” If you add tests later, update the number or leave it out.
 The checks and cleaning logic are plain pandas functions with no Streamlit code, so they are tested directly. The tests cover missing-value detection, duplicate detection, email and range validation, the quality score arithmetic, cleaning (including that the original data is left unchanged), the issue report, and empty or invalid input files.
 
 ## Project structure
