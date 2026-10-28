@@ -8,6 +8,7 @@ from io import BytesIO
 import pandas as pd
 
 from quality_summary import flagged_records, quality_summary
+from ui_helpers import tidy_numbers
 
 
 def build_issue_report(df: pd.DataFrame, id_col=None, issues=None) -> dict:
@@ -44,7 +45,7 @@ def build_issue_report(df: pd.DataFrame, id_col=None, issues=None) -> dict:
     sheets = {
         "Summary": summary,
         "Issues by type": quality["table"],
-        "Flagged records": flagged_records(df, id_col, issues),
+        "Flagged records": tidy_numbers(flagged_records(df, id_col, issues)),
     }
     if issues is not None and not issues.empty:
         sheets["Validation issues"] = issues

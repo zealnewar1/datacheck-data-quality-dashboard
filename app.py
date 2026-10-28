@@ -29,6 +29,8 @@ from file_loading import (
 )
 from quality_summary import flagged_records, quality_summary
 from reports import build_issue_report, report_to_excel_bytes
+from sample_data import sample_csv_bytes
+from ui_helpers import GLOSSARY, score_message, tidy_numbers
 
 st.set_page_config(
     page_title="Excel & CSV Data Analyzer",
@@ -37,6 +39,7 @@ st.set_page_config(
 )
 
 PREVIEW_ROWS = 100
+SAMPLE_NAME = "sample_customers.csv"
 
 
 # ---------- Cached helpers ----------
@@ -73,7 +76,7 @@ def build_chart(df, chart_type, x_col, y_col):
 
     if chart_type == "Bar Chart":
         if x_col == y_col:
-            st.warning("Choose different columns for the X-axis and the numeric column.")
+            st.warning("Pick two different columns: one for the bars and one for the numbers.")
             return None
         chart_df = df.groupby(x_col, dropna=False)[y_col].sum().reset_index()
         return px.bar(chart_df, x=x_col, y=y_col)
@@ -84,34 +87,86 @@ def build_chart(df, chart_type, x_col, y_col):
     return px.scatter(df, x=x_col, y=y_col)
 
 
+def start_sample():
+    st.session_state["use_sample"] = True
+
+
+def stop_sample():
+    st.session_state["use_sample"] = False
+
+
 # ---------- Page ----------
 st.title("📊 Excel & CSV Data Analyzer")
-st.write("Upload your own Excel or CSV file to analyze your data.")
+st.write(
+    "Check a customer spreadsheet for blank cells, duplicates and invalid values. "
+    "You get a quality score, a list of the rows to fix, a cleaned copy and a report."
+)
+
+no_file_yet = (
+    st.session_state.get("upload") is None
+    and not st.session_state.get("use_sample", False)
+)
+
+with st.expander("How to use this app", expanded=no_file_yet):
+    st.markdown(
+        "1. **Upload** an Excel (.xlsx) or CSV file, or try the sample data.\n"
+        "2. **Read the results.** The app lists blank cells, duplicate rows and invalid "
+        "values, and gives a quality score.\n"
+        "3. **Clean and download.** Choose how to tidy the data, then download the "
+        "cleaned file and the issue report.\n\n"
+        "Your original file is never changed, and nothing is stored after you close the page."
+    )
+
+with st.expander("What do these terms mean?"):
+    for term, meaning in GLOSSARY.items():
+        st.markdown(f"**{term}**: {meaning}")
 
 uploaded_file = st.file_uploader(
     "Choose an Excel or CSV file",
     type=["csv", "xlsx"],
+    key="upload",
+    help="Supported types: .csv and .xlsx. The first row should contain the column headings.",
 )
 
-if uploaded_file is None:
-    st.info("👆 Upload a file above to get started.")
-    st.subheader("Example data")
-    sample_df = pd.DataFrame({
-        "Month": ["January", "February", "March"],
-        "Sales": [12000, 15000, 11000],
-        "Orders": [120, 150, 110],
-    })
-    st.dataframe(sample_df, width="stretch")
+using_sample = st.session_state.get("use_sample", False) and uploaded_file is None
+
+if uploaded_file is None and not using_sample:
+    st.info("👆 Upload a file above to get started, or try the sample first.")
+    w1, w2 = st.columns(2)
+    w1.download_button(
+        "⬇️ Download a sample file",
+        data=sample_csv_bytes(),
+        file_name=SAMPLE_NAME,
+        mime="text/csv",
+        help="A made-up customer list with deliberate mistakes. Open it in Excel, or upload it here.",
+    )
+    w2.button(
+        "▶️ Try the app with the sample data",
+        on_click=start_sample,
+        help="Loads the sample file straight away so you can see how everything works.",
+    )
     st.stop()
 
 # ---------- Load data (file_loading.py turns every problem into a clear message) ----------
-file_bytes = uploaded_file.getvalue()
+if using_sample:
+    st.info(
+        "You are looking at the built-in sample data, a made-up customer list with "
+        "deliberate mistakes. Upload your own file above at any time."
+    )
+    st.button("Stop using the sample data", on_click=stop_sample)
+    file_name, file_bytes = SAMPLE_NAME, sample_csv_bytes()
+else:
+    file_name, file_bytes = uploaded_file.name, uploaded_file.getvalue()
 
 try:
-    if file_kind(uploaded_file.name) == "csv":
+    if file_kind(file_name) == "csv":
         df = cached_load_csv(file_bytes)
     else:
-        sheet = st.selectbox("Choose worksheet", cached_sheet_names(file_bytes))
+        sheet = st.selectbox(
+            "Choose worksheet",
+            cached_sheet_names(file_bytes),
+            help="This Excel file has more than one sheet. Pick the one to analyze.",
+        )
         df = cached_load_excel(file_bytes, sheet)
 except FileLoadError as error:
     st.error(str(error))
@@ -122,11 +177,12 @@ st.subheader("📈 Dataset Overview")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Rows", len(df))
 c2.metric("Columns", len(df.columns))
-c3.metric("Missing cells", int(missing_mask(df).sum().sum()))
+c3.metric("Blank cells", int(missing_mask(df).sum().sum()))
 c4.metric("Duplicate rows", int(df.duplicated().sum()))
 
 st.subheader("Your Data")
-st.dataframe(df.head(PREVIEW_ROWS), width="stretch")
+st.caption(f"Showing the first {PREVIEW_ROWS} rows." if len(df) > PREVIEW_ROWS else "Showing every row.")
+st.dataframe(tidy_numbers(df).head(PREVIEW_ROWS), width="stretch")
 
 with st.expander("View column information"):
     info = pd.DataFrame({
@@ -139,6 +195,7 @@ with st.expander("View column information"):
 
 # ---------- Missing data (Day 4) ----------
 st.subheader("🕳️ Missing Data")
+st.caption(GLOSSARY["Missing data"])
 summary = missing_summary(df)
 affected = rows_with_missing(df)
 
@@ -154,12 +211,13 @@ else:
     st.dataframe(summary, width="stretch", hide_index=True)
 
     st.write("**Rows that need attention** (File Row = row number in your file)")
-    st.dataframe(affected, width="stretch", hide_index=True)
+    st.dataframe(tidy_numbers(affected), width="stretch", hide_index=True)
 
 # ---------- Duplicates (Day 5) ----------
 st.subheader("👯 Duplicate Records")
 
-st.write("**Exact duplicate rows** (every column is identical)")
+st.write("**Exact duplicate rows**")
+st.caption(GLOSSARY["Exact duplicate rows"])
 exact_dups = exact_duplicates(df)
 if exact_dups.empty:
     st.success("No exact duplicate rows found.")
@@ -168,19 +226,21 @@ else:
     d1, d2 = st.columns(2)
     d1.metric("Extra copies to remove", extra)
     d2.metric("Groups of duplicates", int(exact_dups["Duplicate Group"].nunique()))
-    st.dataframe(exact_dups, width="stretch", hide_index=True)
+    st.dataframe(tidy_numbers(exact_dups), width="stretch", hide_index=True)
 
 st.write("**Duplicate customer IDs** (checked separately)")
+st.caption(GLOSSARY["Duplicate customer IDs (conflicting)"])
 id_options = ["(none)"] + df.columns.tolist()
 guessed = guess_id_column(df)
 id_col = st.selectbox(
     "Which column is the customer ID?",
     id_options,
     index=id_options.index(guessed) if guessed in id_options else 0,
+    help="The column that should be unique for every customer. The app guesses it from the column names.",
 )
 
 if id_col == "(none)":
-    st.info("Pick the ID column to check for repeated IDs.")
+    st.info("Pick the ID column above to check for repeated IDs.")
 else:
     dup_ids = duplicate_ids(df, id_col)
     if dup_ids.empty:
@@ -193,17 +253,24 @@ else:
             int(dup_ids.loc[dup_ids["Issue"] == "Same ID, different details", id_col].nunique()),
         )
         st.caption("Blank IDs are reported under Missing Data, not here.")
-        st.dataframe(dup_ids, width="stretch", hide_index=True)
+        st.dataframe(tidy_numbers(dup_ids), width="stretch", hide_index=True)
 
 # ---------- Field validation (Day 6, rule toggles Day 8) ----------
 st.subheader("✅ Field Validation")
-st.caption("Switch rules on or off, and choose the columns each rule applies to.")
+st.caption(
+    "Rules check that the values make sense. Switch each rule on or off, and choose "
+    "which columns it applies to."
+)
 
 rules = default_rules(df)
 all_cols = df.columns.tolist()
 numeric_options = ["(none)"] + df.select_dtypes(include="number").columns.tolist()
 
-run_required = st.checkbox("Run the required-fields check", value=True)
+run_required = st.checkbox(
+    "Run the required-fields check",
+    value=True,
+    help=GLOSSARY["Required field"],
+)
 required_cols = st.multiselect(
     "Required columns (must not be blank)",
     all_cols,
@@ -211,7 +278,11 @@ required_cols = st.multiselect(
     disabled=not run_required,
 )
 
-run_email = st.checkbox("Run the email-format check", value=True)
+run_email = st.checkbox(
+    "Run the email-format check",
+    value=True,
+    help=GLOSSARY["Email format"],
+)
 email_cols = st.multiselect(
     "Columns that should contain email addresses",
     all_cols,
@@ -219,7 +290,11 @@ email_cols = st.multiselect(
     disabled=not run_email,
 )
 
-run_range = st.checkbox("Run the number-range check", value=True)
+run_range = st.checkbox(
+    "Run the number-range check",
+    value=True,
+    help=GLOSSARY["Number range"],
+)
 range_col = st.selectbox(
     "Check that numbers in this column stay within a range",
     numeric_options,
@@ -234,7 +309,7 @@ if run_range and range_col != "(none)":
     low = r1.number_input("Minimum allowed", value=rules["range_min"])
     high = r2.number_input("Maximum allowed", value=rules["range_max"])
     if low > high:
-        st.warning("Minimum is larger than maximum, so the range check was skipped.")
+        st.warning("The minimum is larger than the maximum, so the range check was skipped.")
     else:
         numeric_range = (range_col, low, high)
 
@@ -272,6 +347,9 @@ q2.metric("Columns", quality["total_columns"])
 q3.metric("Rows with issues", quality["rows_with_issues"])
 q4.metric("Quality score", f"{quality['score']:.1f}%")
 st.progress(quality["score"] / 100)
+
+level, message = score_message(quality["score"])
+getattr(st, level)(message)
 
 st.write("**Issues by type**")
 st.dataframe(quality["table"], width="stretch", hide_index=True)
@@ -335,11 +413,11 @@ else:
         issue_types=chosen_types, only_flagged=only_flagged,
     )
     if records.empty:
-        st.info("No records match. Pick at least one issue type.")
+        st.info("No records match. Pick at least one issue type above.")
     else:
         st.write(f"Showing {len(records)} of {len(df)} rows "
                  "(File Row = row number in your file)")
-        st.dataframe(records, width="stretch", hide_index=True)
+        st.dataframe(tidy_numbers(records), width="stretch", hide_index=True)
 
 # ---------- Clean your data (Day 9) ----------
 st.subheader("🧹 Clean Your Data")
@@ -348,16 +426,22 @@ st.caption(
     "remove duplicates, fill blanks, then remove any rows that still have blanks."
 )
 
-remove_duplicates = st.checkbox("Remove exact duplicate rows (keeps the first copy)")
+remove_duplicates = st.checkbox(
+    "Remove exact duplicate rows (keeps the first copy)",
+    help="Rows with the same ID but different details are NOT removed, because only you can say which is right.",
+)
 
-fill_blanks = st.checkbox("Fill selected missing values")
+fill_blanks = st.checkbox(
+    "Fill selected missing values",
+    help="Choose the columns to fill and how. Columns that cannot be filled safely are skipped with a warning.",
+)
 fills = {}
 if fill_blanks:
     blank_mask = missing_mask(df)
     # The ID column is left out: an invented ID or email hides a real problem
     fillable = [c for c in df.columns if blank_mask[c].any() and c != id_arg]
     if not fillable:
-        st.info("There are no missing values to fill (the customer ID column is never filled).")
+        st.info("There are no blank cells to fill (the customer ID column is never filled).")
     else:
         fill_cols = st.multiselect("Columns to fill", fillable)
         for col in fill_cols:
@@ -369,7 +453,10 @@ if fill_blanks:
                 value = st.text_input(f"Value to use for '{col}'", key=f"fill_value_{col}")
             fills[col] = {"method": method, "value": value}
 
-remove_missing = st.checkbox("Remove rows that still contain missing values")
+remove_missing = st.checkbox(
+    "Remove rows that still contain missing values",
+    help="Removes any row that still has a blank cell after the steps above.",
+)
 
 clean_df, clean_stats = clean_data(df, remove_duplicates, fills, remove_missing)
 
@@ -386,7 +473,7 @@ s5.metric("Rows removed (blanks)", clean_stats["rows_removed_for_missing"])
 has_rows = not clean_df.empty
 
 if not has_rows:
-    st.warning("No rows left after cleaning. Untick an option above.")
+    st.warning("No rows are left after cleaning. Untick one of the options above.")
 else:
     issues_after = (
         run_checks(clean_df, active_required, active_email, numeric_range)
@@ -398,7 +485,7 @@ else:
         f"{after['score']:.1f}%",
         delta=f"{after['score'] - quality['score']:+.1f} points vs. original",
     )
-    st.dataframe(clean_df.head(PREVIEW_ROWS), width="stretch")
+    st.dataframe(tidy_numbers(clean_df).head(PREVIEW_ROWS), width="stretch")
 
 # ---------- Charts ----------
 if has_rows:
@@ -422,9 +509,10 @@ if has_rows:
             if fig is not None:
                 st.plotly_chart(fig, width="stretch")
         except Exception as error:
-            st.error(f"Could not build this chart: {error}")
+            st.error("This chart could not be drawn with the columns you picked. Try a different combination.")
+            st.caption(f"Technical detail: {error}")
     else:
-        st.info("No numeric columns are available for charting.")
+        st.info("This data has no numeric columns, so there is nothing to chart.")
 
 # ---------- Downloads (Day 9) ----------
 st.subheader("⬇️ Download")
@@ -438,20 +526,21 @@ xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 dl1, dl2, dl3 = st.columns(3)
 if has_rows:
+    download_df = tidy_numbers(clean_df)
     dl1.download_button(
         "Cleaned data (CSV)",
-        data=clean_df.to_csv(index=False).encode("utf-8-sig"),
+        data=download_df.to_csv(index=False).encode("utf-8-sig"),
         file_name="cleaned_data.csv",
         mime="text/csv",
     )
     dl2.download_button(
         "Cleaned data (Excel)",
-        data=to_excel_bytes(clean_df),
+        data=to_excel_bytes(download_df),
         file_name="cleaned_data.xlsx",
         mime=xlsx_mime,
     )
 else:
-    dl1.info("Nothing to download: no rows left after cleaning.")
+    dl1.info("Nothing to download: no rows are left after cleaning.")
 
 dl3.download_button(
     "Issue report (Excel)",
